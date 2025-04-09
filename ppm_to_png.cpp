@@ -11,7 +11,7 @@
 namespace fs = std::filesystem;
 
 bool convert_ppm_to_png(const std::string& ppm_path, const std::string& png_path) {
-    // Read PPM file
+
     int width, height, channels;
     unsigned char* data = stbi_load(ppm_path.c_str(), &width, &height, &channels, 0);
     if (!data) {
@@ -19,7 +19,6 @@ bool convert_ppm_to_png(const std::string& ppm_path, const std::string& png_path
         return false;
     }
 
-    // Write PNG file
     int success = stbi_write_png(png_path.c_str(), width, height, channels, data, width * channels);
     stbi_image_free(data);
 
@@ -47,7 +46,6 @@ int main(int argc, char* argv[]) {
     int converted = 0;
     int failed = 0;
 
-    // Convert all PPM files in the directory
     for (const auto& entry : fs::directory_iterator(dir_path)) {
         if (entry.path().extension() == ".ppm") {
             std::string ppm_path = entry.path().string();

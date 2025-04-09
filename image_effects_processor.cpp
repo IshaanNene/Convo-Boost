@@ -1,6 +1,3 @@
-// image_effects_processor.cpp
-// Library for applying various image effects using Metal acceleration
-
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
 #include <iostream>
@@ -10,12 +7,10 @@
 #include <functional>
 #include <cmath>
 
-// Metal shader code as a string - will be compiled at runtime
 const char* metalEffectsCode = R"(
 #include <metal_stdlib>
 using namespace metal;
 
-// Basic convolution kernel that applies the provided kernel matrix
 kernel void convolution2D(
     texture2d<float, access::read> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
@@ -27,21 +22,18 @@ kernel void convolution2D(
     const int width = inputTexture.get_width();
     const int height = inputTexture.get_height();
     
-    // Check if we're within the image bounds
     if (pos.x >= width || pos.y >= height) {
         return;
     }
     
     float4 result = float4(0.0, 0.0, 0.0, 0.0);
     
-    // Apply the convolution
     for (int ky = 0; ky < kernelSize; ky++) {
         for (int kx = 0; kx < kernelSize; kx++) {
             int2 samplePos;
             samplePos.x = pos.x + kx - kernelRadius;
             samplePos.y = pos.y + ky - kernelRadius;
             
-            // Clamp to edge for boundary pixels
             samplePos.x = clamp(samplePos.x, 0, width - 1);
             samplePos.y = clamp(samplePos.y, 0, height - 1);
             
@@ -52,87 +44,71 @@ kernel void convolution2D(
         }
     }
     
-    // Preserve alpha if needed
     float4 original = inputTexture.read(pos);
-    result.a = original.a; // Keep original alpha
+    result.a = original.a;
     
     outputTexture.write(result, pos);
 }
 
-// Brightness adjustment kernel
 kernel void adjustBrightness(
     texture2d<float, access::read> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
     constant float& factor [[buffer(0)]],
     uint2 pos [[thread_position_in_grid]])
 {
-    // Check if we're within image bounds
     if (pos.x >= inputTexture.get_width() || pos.y >= inputTexture.get_height()) {
         return;
     }
     
     float4 color = inputTexture.read(pos);
     
-    // Adjust brightness (RGB channels only)
     float4 result = float4(color.rgb * factor, color.a);
     
-    // Clamp values to valid range
     result = clamp(result, 0.0f, 1.0f);
     
     outputTexture.write(result, pos);
 }
 
-// Contrast adjustment kernel
 kernel void adjustContrast(
     texture2d<float, access::read> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
     constant float& factor [[buffer(0)]],
     uint2 pos [[thread_position_in_grid]])
 {
-    // Check if we're within image bounds
     if (pos.x >= inputTexture.get_width() || pos.y >= inputTexture.get_height()) {
         return;
     }
     
     float4 color = inputTexture.read(pos);
     
-    // Apply contrast adjustment formula (RGB channels only)
-    // Formula: (color - 0.5) * factor + 0.5
     float4 result = float4((color.rgb - 0.5f) * factor + 0.5f, color.a);
     
-    // Clamp values to valid range
     result = clamp(result, 0.0f, 1.0f);
     
     outputTexture.write(result, pos);
 }
 
-// Saturation adjustment kernel
 kernel void adjustSaturation(
     texture2d<float, access::read> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
     constant float& factor [[buffer(0)]],
     uint2 pos [[thread_position_in_grid]])
 {
-    // Check if we're within image bounds
     if (pos.x >= inputTexture.get_width() || pos.y >= inputTexture.get_height()) {
         return;
     }
     
     float4 color = inputTexture.read(pos);
     
-    // Calculate luminance (grayscale value)
     float luminance = dot(color.rgb, float3(0.299f, 0.587f, 0.114f));
     
-    // Mix between grayscale and original color based on saturation factor
     float4 result = float4(mix(float3(luminance), color.rgb, factor), color.a);
     
-    // Clamp values to valid range
     result = clamp(result, 0.0f, 1.0f);
     
     outputTexture.write(result, pos);
 }
 
-// Edge detection kernel
 kernel void edgeDetect(
     texture2d<float, access::read> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
@@ -141,12 +117,10 @@ kernel void edgeDetect(
     const int width = inputTexture.get_width();
     const int height = inputTexture.get_height();
     
-    // Check if we're within image bounds
     if (pos.x >= width || pos.y >= height) {
         return;
     }
     
-    // Sample the surrounding pixels (3x3 grid)
     float4 topLeft = inputTexture.read(uint2(clamp(int(pos.x) - 1, 0, width - 1), 
                                            clamp(int(pos.y) - 1, 0, height - 1)));
     float4 top = inputTexture.read(uint2(pos.x, clamp(int(pos.y) - 1, 0, height - 1)));
@@ -163,37 +137,29 @@ kernel void edgeDetect(
     float4 bottomRight = inputTexture.read(uint2(clamp(int(pos.x) + 1, 0, width - 1), 
                                                clamp(int(pos.y) + 1, 0, height - 1)));
     
-    // Apply Sobel operator (edge detection)
-    // Horizontal gradient
     float4 gx = -topLeft - 2.0f * left - bottomLeft + topRight + 2.0f * right + bottomRight;
     
-    // Vertical gradient
     float4 gy = -topLeft - 2.0f * top - topRight + bottomLeft + 2.0f * bottom + bottomRight;
     
-    // Approximate magnitude
     float4 mag = sqrt(gx * gx + gy * gy);
     
-    // Keep original alpha
     mag.a = center.a;
     
     outputTexture.write(mag, pos);
 }
 
-// Sepia tone effect
 kernel void sepiaTone(
     texture2d<float, access::read> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
     constant float& intensity [[buffer(0)]],
     uint2 pos [[thread_position_in_grid]])
 {
-    // Check if we're within image bounds
     if (pos.x >= inputTexture.get_width() || pos.y >= inputTexture.get_height()) {
         return;
     }
     
     float4 color = inputTexture.read(pos);
     
-    // Apply sepia transformation
     float4 sepia = float4(
         dot(color.rgb, float3(0.393f, 0.769f, 0.189f)),
         dot(color.rgb, float3(0.349f, 0.686f, 0.168f)),
@@ -201,13 +167,11 @@ kernel void sepiaTone(
         color.a
     );
     
-    // Mix with original based on intensity
     float4 result = mix(color, sepia, intensity);
     
     outputTexture.write(result, pos);
 }
 
-// Pixelate effect
 kernel void pixelate(
     texture2d<float, access::read> inputTexture [[texture(0)]],
     texture2d<float, access::write> outputTexture [[texture(1)]],
@@ -217,15 +181,12 @@ kernel void pixelate(
     const int width = inputTexture.get_width();
     const int height = inputTexture.get_height();
     
-    // Check if we're within image bounds
     if (pos.x >= width || pos.y >= height) {
         return;
     }
     
-    // Calculate the top-left position of the block this pixel belongs to
     uint2 blockStart = uint2((pos.x / blockSize) * blockSize, (pos.y / blockSize) * blockSize);
     
-    // Sample the color at the center of the block
     uint2 samplePos = uint2(
         clamp(blockStart.x + blockSize / 2, 0u, uint(width - 1)),
         clamp(blockStart.y + blockSize / 2, 0u, uint(height - 1))
@@ -246,19 +207,16 @@ private:
     
 public:
     ImageEffects() {
-        // Initialize Metal
         device = MTLCreateSystemDefaultDevice();
         if (!device) {
             throw std::runtime_error("Failed to create Metal device");
         }
         
-        // Create command queue
         commandQueue = [device newCommandQueue];
         if (!commandQueue) {
             throw std::runtime_error("Failed to create command queue");
         }
         
-        // Compile shader code
         NSError* error = nil;
         library = [device newLibraryWithSource:[NSString stringWithUTF8String:metalEffectsCode]
                                        options:nil
@@ -269,7 +227,6 @@ public:
                                     [errorString UTF8String]);
         }
         
-        // Create compute pipelines for different effects
         createPipelineState("convolution2D");
         createPipelineState("adjustBrightness");
         createPipelineState("adjustContrast");
@@ -279,7 +236,6 @@ public:
         createPipelineState("pixelate");
     }
     
-    // Blur image using Gaussian blur
     void applyGaussianBlur(
         const std::vector<float>& inputImage,
         std::vector<float>& outputImage,
@@ -288,9 +244,8 @@ public:
         int channels,
         float sigma = 1.5f)
     {
-        // Generate Gaussian kernel
         int kernelSize = std::max(3, static_cast<int>(std::ceil(sigma * 6)));
-        if (kernelSize % 2 == 0) kernelSize++; // Make sure kernel size is odd
+        if (kernelSize % 2 == 0) kernelSize++;
         
         std::vector<float> kernel(kernelSize * kernelSize);
         float sum = 0.0f;
@@ -307,16 +262,13 @@ public:
             }
         }
         
-        // Normalize kernel
         for (auto& value : kernel) {
             value /= sum;
         }
         
-        // Apply convolution with Gaussian kernel
         applyConvolution(inputImage, outputImage, kernel, width, height, channels, kernelSize);
     }
     
-    // Adjust brightness
     void adjustBrightness(
         const std::vector<float>& inputImage,
         std::vector<float>& outputImage,
@@ -325,20 +277,16 @@ public:
         int channels,
         float factor)
     {
-        // Create Metal textures for input and output
         MTLTextureDescriptor* textureDescriptor = createTextureDescriptor(width, height);
         id<MTLTexture> inputTexture = [device newTextureWithDescriptor:textureDescriptor];
         id<MTLTexture> outputTexture = [device newTextureWithDescriptor:textureDescriptor];
         
-        // Copy input data to texture
         copyDataToTexture(inputImage, inputTexture, width, height, channels);
         
-        // Create buffer for brightness factor
         id<MTLBuffer> factorBuffer = [device newBufferWithBytes:&factor
                                                          length:sizeof(float)
                                                         options:MTLResourceStorageModeShared];
         
-        // Create command buffer and encoder
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
         
@@ -350,16 +298,13 @@ public:
         dispatchCompute(computeEncoder, width, height);
         [computeEncoder endEncoding];
         
-        // Execute and wait for completion
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        // Copy output data back to CPU
         outputImage.resize(width * height * channels);
         copyDataFromTexture(outputTexture, outputImage, width, height, channels);
     }
     
-    // Adjust contrast
     void adjustContrast(
         const std::vector<float>& inputImage,
         std::vector<float>& outputImage,
@@ -368,20 +313,16 @@ public:
         int channels,
         float factor)
     {
-        // Create Metal textures for input and output
         MTLTextureDescriptor* textureDescriptor = createTextureDescriptor(width, height);
         id<MTLTexture> inputTexture = [device newTextureWithDescriptor:textureDescriptor];
         id<MTLTexture> outputTexture = [device newTextureWithDescriptor:textureDescriptor];
         
-        // Copy input data to texture
         copyDataToTexture(inputImage, inputTexture, width, height, channels);
         
-        // Create buffer for contrast factor
         id<MTLBuffer> factorBuffer = [device newBufferWithBytes:&factor
                                                          length:sizeof(float)
                                                         options:MTLResourceStorageModeShared];
         
-        // Create command buffer and encoder
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
         
@@ -393,16 +334,13 @@ public:
         dispatchCompute(computeEncoder, width, height);
         [computeEncoder endEncoding];
         
-        // Execute and wait for completion
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        // Copy output data back to CPU
         outputImage.resize(width * height * channels);
         copyDataFromTexture(outputTexture, outputImage, width, height, channels);
     }
     
-    // Adjust saturation
     void adjustSaturation(
         const std::vector<float>& inputImage,
         std::vector<float>& outputImage,
@@ -411,20 +349,16 @@ public:
         int channels,
         float factor)
     {
-        // Create Metal textures for input and output
         MTLTextureDescriptor* textureDescriptor = createTextureDescriptor(width, height);
         id<MTLTexture> inputTexture = [device newTextureWithDescriptor:textureDescriptor];
         id<MTLTexture> outputTexture = [device newTextureWithDescriptor:textureDescriptor];
         
-        // Copy input data to texture
         copyDataToTexture(inputImage, inputTexture, width, height, channels);
         
-        // Create buffer for saturation factor
         id<MTLBuffer> factorBuffer = [device newBufferWithBytes:&factor
                                                          length:sizeof(float)
                                                         options:MTLResourceStorageModeShared];
         
-        // Create command buffer and encoder
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
         
@@ -436,16 +370,13 @@ public:
         dispatchCompute(computeEncoder, width, height);
         [computeEncoder endEncoding];
         
-        // Execute and wait for completion
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        // Copy output data back to CPU
         outputImage.resize(width * height * channels);
         copyDataFromTexture(outputTexture, outputImage, width, height, channels);
     }
     
-    // Apply edge detection
     void applyEdgeDetection(
         const std::vector<float>& inputImage,
         std::vector<float>& outputImage,
@@ -453,15 +384,12 @@ public:
         int height,
         int channels)
     {
-        // Create Metal textures for input and output
         MTLTextureDescriptor* textureDescriptor = createTextureDescriptor(width, height);
         id<MTLTexture> inputTexture = [device newTextureWithDescriptor:textureDescriptor];
         id<MTLTexture> outputTexture = [device newTextureWithDescriptor:textureDescriptor];
         
-        // Copy input data to texture
         copyDataToTexture(inputImage, inputTexture, width, height, channels);
         
-        // Create command buffer and encoder
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
         
@@ -472,16 +400,13 @@ public:
        dispatchCompute(computeEncoder, width, height);
         [computeEncoder endEncoding];
         
-        // Execute and wait for completion
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        // Copy output data back to CPU
         outputImage.resize(width * height * channels);
         copyDataFromTexture(outputTexture, outputImage, width, height, channels);
     }
     
-    // Apply sepia tone effect
     void applySepiaEffect(
         const std::vector<float>& inputImage,
         std::vector<float>& outputImage,
@@ -490,7 +415,6 @@ public:
         int channels,
         float intensity = 1.0f)
     {
-        // Create Metal textures for input and output
         MTLTextureDescriptor* textureDescriptor = createTextureDescriptor(width, height);
         id<MTLTexture> inputTexture = [device newTextureWithDescriptor:textureDescriptor];
         id<MTLTexture> outputTexture = [device newTextureWithDescriptor:textureDescriptor];

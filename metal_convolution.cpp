@@ -1,13 +1,9 @@
-// Metal Convolution Implementation in C++
-// This demonstrates how to accelerate 2D image convolutions on Apple M1 GPUs
-
 #include <Foundation/Foundation.h>
 #include <Metal/Metal.h>
 #include <iostream>
 #include <vector>
 #include <chrono>
 
-// Metal shader code as a string - will be compiled at runtime
 const char* metalShaderCode = R"(
 #include <metal_stdlib>
 using namespace metal;
@@ -23,21 +19,18 @@ kernel void convolution2D(
     const int width = inputTexture.get_width();
     const int height = inputTexture.get_height();
     
-    // Check if we're within the image bounds
     if (pos.x >= width || pos.y >= height) {
         return;
     }
     
     float4 result = float4(0.0, 0.0, 0.0, 0.0);
     
-    // Apply the convolution
     for (int ky = 0; ky < kernelSize; ky++) {
         for (int kx = 0; kx < kernelSize; kx++) {
             int2 samplePos;
             samplePos.x = pos.x + kx - kernelRadius;
             samplePos.y = pos.y + ky - kernelRadius;
             
-            // Clamp to edge for boundary pixels
             samplePos.x = clamp(samplePos.x, 0, width - 1);
             samplePos.y = clamp(samplePos.y, 0, height - 1);
             
@@ -62,19 +55,16 @@ private:
     
 public:
     MetalConvolution() {
-        // Initialize Metal
         device = MTLCreateSystemDefaultDevice();
         if (!device) {
             throw std::runtime_error("Failed to create Metal device");
         }
         
-        // Create command queue
         commandQueue = [device newCommandQueue];
         if (!commandQueue) {
             throw std::runtime_error("Failed to create command queue");
         }
         
-        // Compile shader code
         NSError* error = nil;
         id<MTLLibrary> library = [device newLibraryWithSource:[NSString stringWithUTF8String:metalShaderCode]
                                                       options:nil
@@ -85,13 +75,11 @@ public:
                                     [errorString UTF8String]);
         }
         
-        // Get kernel function
         kernelFunction = [library newFunctionWithName:@"convolution2D"];
         if (!kernelFunction) {
             throw std::runtime_error("Failed to create kernel function");
         }
         
-        // Create compute pipeline
         pipelineState = [device newComputePipelineStateWithFunction:kernelFunction error:&error];
         if (!pipelineState) {
             NSString* errorString = [error localizedDescription];
@@ -109,7 +97,6 @@ public:
         int channels,
         int kernelSize
     ) {
-        // Create Metal textures for input and output
         MTLTextureDescriptor* textureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA32Float
                                                                                                      width:imageWidth
                                                                                                     height:imageHeight
@@ -119,24 +106,20 @@ public:
         id<MTLTexture> inputTexture = [device newTextureWithDescriptor:textureDescriptor];
         id<MTLTexture> outputTexture = [device newTextureWithDescriptor:textureDescriptor];
         
-        // Copy input data to texture
         MTLRegion region = MTLRegionMake2D(0, 0, imageWidth, imageHeight);
         [inputTexture replaceRegion:region
                         mipmapLevel:0
                           withBytes:inputImage.data()
                         bytesPerRow:imageWidth * channels * sizeof(float)];
         
-        // Create buffer for convolution kernel
         id<MTLBuffer> kernelBuffer = [device newBufferWithBytes:kernel.data()
                                                          length:kernel.size() * sizeof(float)
                                                         options:MTLResourceStorageModeShared];
         
-        // Create buffer for kernel size
         id<MTLBuffer> kernelSizeBuffer = [device newBufferWithBytes:&kernelSize
                                                              length:sizeof(int)
                                                             options:MTLResourceStorageModeShared];
         
-        // Create command buffer and encoder
         id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
         id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
         
@@ -146,7 +129,6 @@ public:
         [computeEncoder setBuffer:kernelBuffer offset:0 atIndex:0];
         [computeEncoder setBuffer:kernelSizeBuffer offset:0 atIndex:1];
         
-        // Calculate optimal thread group size
         MTLSize threadGroupSize = MTLSizeMake(16, 16, 1);
         MTLSize threadGroups = MTLSizeMake(
             (imageWidth + threadGroupSize.width - 1) / threadGroupSize.width,
@@ -157,11 +139,9 @@ public:
         [computeEncoder dispatchThreadgroups:threadGroups threadsPerThreadgroup:threadGroupSize];
         [computeEncoder endEncoding];
         
-        // Execute and wait for completion
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
         
-        // Copy output data back to CPU
         outputImage.resize(imageWidth * imageHeight * channels);
         [outputTexture getBytes:outputImage.data()
                     bytesPerRow:imageWidth * channels * sizeof(float)
@@ -169,16 +149,13 @@ public:
                     mipmapLevel:0];
     }
 
-    // Example method to demonstrate performance comparison between CPU and GPU
     void performanceTest(int imageWidth, int imageHeight) {
         const int channels = 4; // RGBA
         const int kernelSize = 5;
         
-        // Create sample data
         std::vector<float> inputImage(imageWidth * imageHeight * channels, 1.0f);
         std::vector<float> outputImage(imageWidth * imageHeight * channels);
         
-        // Create a simple Gaussian blur kernel
         std::vector<float> kernel = {
             1/256.0f, 4/256.0f, 6/256.0f, 4/256.0f, 1/256.0f,
             4/256.0f, 16/256.0f, 24/256.0f, 16/256.0f, 4/256.0f,
@@ -187,7 +164,6 @@ public:
             1/256.0f, 4/256.0f, 6/256.0f, 4/256.0f, 1/256.0f
         };
         
-        // Measure GPU performance
         auto startGPU = std::chrono::high_resolution_clock::now();
         applyConvolution(inputImage, outputImage, kernel, imageWidth, imageHeight, channels, kernelSize);
         auto endGPU = std::chrono::high_resolution_clock::now();
@@ -195,7 +171,6 @@ public:
         std::chrono::duration<double, std::milli> gpuTime = endGPU - startGPU;
         std::cout << "GPU convolution time: " << gpuTime.count() << " ms" << std::endl;
         
-        // Compare with CPU implementation (simple version)
         auto startCPU = std::chrono::high_resolution_clock::now();
         std::vector<float> cpuOutput(imageWidth * imageHeight * channels);
         cpuConvolution(inputImage, cpuOutput, kernel, imageWidth, imageHeight, channels, kernelSize);
@@ -207,7 +182,6 @@ public:
     }
     
 private:
-    // Simple CPU implementation for comparison
     void cpuConvolution(
         const std::vector<float>& input,
         std::vector<float>& output,
@@ -229,7 +203,6 @@ private:
                             int sampleX = x + kx - kernelRadius;
                             int sampleY = y + ky - kernelRadius;
                             
-                            // Clamp to edge
                             sampleX = std::max(0, std::min(width - 1, sampleX));
                             sampleY = std::max(0, std::min(height - 1, sampleY));
                             
@@ -247,12 +220,10 @@ private:
     }
 };
 
-// Main function to demonstrate usage
 int main() {
     try {
         MetalConvolution metalConv;
         
-        // Test with different image sizes
         std::cout << "Testing with 512x512 image:" << std::endl;
         metalConv.performanceTest(512, 512);
         
